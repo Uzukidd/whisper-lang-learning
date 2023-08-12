@@ -1,3 +1,6 @@
+# debugging & third-partly components & testing
+third-partly-comps/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
