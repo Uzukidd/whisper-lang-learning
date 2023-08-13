@@ -7,29 +7,11 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLineEdit,
                             QPushButton, QSlider, QMessageBox, QStyle, QVBoxLayout,  
-                            QWidget, QMenu, QPlainTextEdit, QTextEdit, QDialogButtonBox, QLabel, QApplication, QDialog, QMainWindow, QPushButton)
+                            QWidget, QMenu, QPlainTextEdit, QTextEdit)
 import sys
 import subprocess
 import pickle as pkl
 #QT_DEBUG_PLUGINS
-
-class CustomDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowTitle("Finish practice")
-
-        QBtn = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-
-        self.buttonBox = QDialogButtonBox(QBtn)
-        self.buttonBox.accepted.connect(self.accept)
-        self.buttonBox.rejected.connect(self.reject)
-
-        self.layout = QVBoxLayout()
-        message = QLabel("Are you sure to finish this practice?")
-        self.layout.addWidget(message)
-        self.layout.addWidget(self.buttonBox)
-        self.setLayout(self.layout)
 
 class VideoPlayer(QWidget):
 
@@ -79,9 +61,6 @@ class VideoPlayer(QWidget):
         self.positionSlider.setPageStep(20)
         self.positionSlider.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         
-        self.practice_mode = False
-        self.caption_show = False
-        
         self.caption = QLineEdit(self)
         self.caption.setReadOnly(True)
         self.caption.setTextMargins(10, 10, 10, 10)
@@ -92,7 +71,6 @@ class VideoPlayer(QWidget):
         self.caption_input.setFont(QFont('BIZ UDMincho', 15))
         
         self.caption_text = None
-        self.caption_answer = None
         self.caption_idx = -1
 
 
@@ -166,13 +144,9 @@ class VideoPlayer(QWidget):
         self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), self.caption_input)
         self.shortcut.activated.connect(self.nextCaption)
         self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Down), self.caption_input)
-        self.shortcut.activated.connect(lambda: self.nextCaption(True))
+        self.shortcut.activated.connect(self.nextCaption)
         self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Up), self.caption_input)
         self.shortcut.activated.connect(self.lastCaption)
-        self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Enter), self.caption_input)
-        self.shortcut.activated.connect(self.replay_caption)
-        
-        self.caption_input.textChanged.connect(self.text_input_change)
 
         self.mediaPlayer.setVideoOutput(self.videoWidget)
         self.mediaPlayer.playbackStateChanged.connect(self.mediaStateChanged)
@@ -238,13 +212,11 @@ class VideoPlayer(QWidget):
 
         if fileName != '':
             self.caption_text = pkl.load(open(fileName, "rb"))
-            self.caption_answer = [""] * len(self.caption_text)
             self.caption_idx = 0
             self.setPosition(0)
             print("Caption loaded")
         else:
             self.caption_text = None
-            self.caption_answer = None
             self.caption_idx = -1
             print("Caption unloaded")
         
@@ -262,10 +234,6 @@ class VideoPlayer(QWidget):
         else:
             self.playButton.setIcon(self.style().standardIcon(self.pauseIcon))
 
-    def text_input_change(self, text):
-        if self.caption_text is not None:
-            self.caption_answer[self.caption_idx] = self.caption_input.text()
-
     def positionChanged(self, position):
         # print("positionChanged")
         self.positionSlider.setValue(position)
@@ -276,22 +244,12 @@ class VideoPlayer(QWidget):
         self.caption.setText("")
         if self.caption_text is not None:
             seg = self.caption_text[self.caption_idx]
-            if self.practice_mode:
-                if seg["end"] * 1000 <= position:
-                    self.mediaPlayer.pause()
-                
-            if self.caption_show:
-                for seg in self.caption_text:
-                    if seg["start"] * 1000 <= position and seg["end"] * 1000 >= position:
-                        self.caption.setText(seg["text"])
-                        break
-            
-    def replay_caption(self):
-        if self.caption_text is not None:
-            seg = int(self.caption_text[self.caption_idx]["start"] * 1000)
-            self.setPosition(seg)
-            self.mediaPlayer.play()
-            
+            if seg["end"] * 1000 <= position:
+                self.mediaPlayer.pause()
+            # for seg in self.caption_text:
+            #     if seg["start"] * 1000 <= position and seg["end"] * 1000 >= position:
+            #         self.caption.setText(seg["text"])
+            #         break
             
     def lastCaption(self):
         if self.caption_text is not None:
@@ -300,67 +258,24 @@ class VideoPlayer(QWidget):
                 seg = int(self.caption_text[self.caption_idx]["start"] * 1000)
                 self.setPosition(seg)
                 self.mediaPlayer.play()
-            self.caption_input.setText(self.caption_answer[self.caption_idx])
                 
             
-    def nextCaption(self, next_flag = False):
+    def nextCaption(self):
         if self.caption_text is not None:
-            if not next_flag and not self.caption_input.text():
+            if not self.caption_input.text():
                 seg = int(self.caption_text[self.caption_idx]["start"] * 1000)
                 self.setPosition(seg)
                 self.mediaPlayer.play()
-                self.caption_input.setText(self.caption_answer[self.caption_idx])
 
             elif self.caption_idx < len(self.caption_text) - 1:
                 self.caption_idx = self.caption_idx + 1
                 seg = int(self.caption_text[self.caption_idx]["start"] * 1000)
                 self.setPosition(seg)
                 self.mediaPlayer.play()
-                self.caption_input.setText(self.caption_answer[self.caption_idx])
                 
             else:
-                dlg = CustomDialog()
-                self.mediaPlayer.pause()
-                if dlg.exec():
-                    self.result_publish()
-                    print("Success!")
-                    self.handleQuit()
-                else:
-                    print("Cancel!")
-                    
-    def switch_practice_mode(self):
-        self.practice_mode = not self.practice_mode
-        if not self.practice_mode:
-            self.caption_input.setEnabled(False)
-            self.caption.setText("")
-        else:
-            self.caption_input.setEnabled(True)
-            self.caption.setText("")
-            
-    def show_caption(self):
-        self.caption_show = not self.caption_show
-        if not self.caption_show:
-            self.caption.setText("")
-
-            
-    def result_publish(self):
-        result_log = ""
-        for text, ans in zip(self.caption_text, self.caption_answer):
-            text = text["text"]
-            result_log += f"text:{text}\n"
-            result_log += f"your answer:{ans}\n"
-            result_log += "\n"
-            
-        
-        from datetime import datetime
-        now = datetime.now()
-        date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
-        
-        with open(f"./{str(date_time)}.txt", "w+") as input_str:
-            input_str.write(result_log)
-            
-        print(result_log)
-        
+                # publish result
+                pass
         
     def durationChanged(self, duration):
         self.positionSlider.setRange(0, duration)
@@ -392,8 +307,6 @@ class VideoPlayer(QWidget):
         actionFile = menu.addAction(QIcon.fromTheme("video-x-generic"),"open File (o)")
         actionCaption = menu.addAction(QIcon.fromTheme("video-x-generic"),"open Caption (null)")
         actionclipboard = menu.addSeparator() 
-        actionPractice = menu.addAction(QIcon.fromTheme("video-x-generic"),"pratice Mode (null)")
-        actionShowCaption = menu.addAction(QIcon.fromTheme("video-x-generic"),"show caption (null)")
         actionURL = menu.addAction(QIcon.fromTheme("browser"),"URL from Clipboard (u)")
         actionclipboard = menu.addSeparator() 
         actionYTurl = menu.addAction(QIcon.fromTheme("youtube"), "URL from YouTube (y)")
@@ -407,11 +320,9 @@ class VideoPlayer(QWidget):
         action5 = menu.addSeparator() 
         actionQuit = menu.addAction(QIcon.fromTheme("application-exit"),"Exit (q)")
         
-        
+
         actionFile.triggered.connect(self.openFile)
         actionCaption.triggered.connect(self.openCaption)
-        actionPractice.triggered.connect(self.switch_practice_mode)
-        actionShowCaption.triggered.connect(self.show_caption)
         actionQuit.triggered.connect(self.handleQuit)
         actionFull.triggered.connect(self.handleFullscreen)
         actionInfo.triggered.connect(self.handleInfo)
