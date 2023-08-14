@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from PyQt6.QtGui import QKeySequence, QIcon, QShortcut, QDrag, QFont
-from PyQt6.QtCore import QDir, Qt, QUrl, QPoint, QTime, QProcess, QRect
+from PyQt6.QtCore import QDir, Qt, QUrl, QPoint, QTime, QProcess, QRect, QThread
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLineEdit,
@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLineEdit,
 import sys
 import subprocess
 import pickle as pkl
+import whisper
+import os
 #QT_DEBUG_PLUGINS
 
 class CustomDialog(QDialog):
@@ -26,10 +28,13 @@ class CustomDialog(QDialog):
         self.buttonBox.rejected.connect(self.reject)
 
         self.layout = QVBoxLayout()
-        message = QLabel("Are you sure to finish this practice?")
+        message = QLabel("Are you sure to finish the practice?")
         self.layout.addWidget(message)
         self.layout.addWidget(self.buttonBox)
         self.setLayout(self.layout)
+        
+        
+
 
 class VideoPlayer(QWidget):
 
@@ -72,7 +77,7 @@ class VideoPlayer(QWidget):
         self.playButton.clicked.connect(self.play)
 
         self.positionSlider = QSlider(Qt.Orientation.Horizontal, self)
-        self.positionSlider.setStyleSheet (stylesheet(self)) 
+        self.positionSlider.setStyleSheet(stylesheet(self)) 
         self.positionSlider.setRange(0, 100)
         self.positionSlider.sliderMoved.connect(self.setPosition)
         self.positionSlider.setSingleStep(2)
@@ -120,8 +125,8 @@ class VideoPlayer(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.videoWidget)
-        layout.addLayout(controlLayout)
         layout.addLayout(inputLayout)
+        layout.addLayout(controlLayout)
 
         self.setLayout(layout)
         
@@ -130,38 +135,6 @@ class VideoPlayer(QWidget):
                 "SHIFT+LEFT = < 10 Minutes\nSHIFT+RIGHT = > 10 Minutes"
 
         self.widescreen = True
-        
-        #### shortcuts ####
-        self.shortcut = QShortcut(QKeySequence("q"), self)
-        self.shortcut.activated.connect(self.handleQuit)
-        self.shortcut = QShortcut(QKeySequence("u"), self)
-        self.shortcut.activated.connect(self.playFromURL)
-
-        self.shortcut = QShortcut(QKeySequence("y"), self)
-        self.shortcut.activated.connect(self.getYTUrl)
-
-        self.shortcut = QShortcut(QKeySequence("o"), self)
-        self.shortcut.activated.connect(self.openFile)
-        self.shortcut = QShortcut(QKeySequence(" "), self)
-        self.shortcut.activated.connect(self.play)
-        self.shortcut = QShortcut(QKeySequence("f"), self)
-        self.shortcut.activated.connect(self.handleFullscreen)
-        self.shortcut = QShortcut(QKeySequence("i"), self)
-        self.shortcut.activated.connect(self.handleInfo)
-        self.shortcut = QShortcut(QKeySequence("s"), self)
-        self.shortcut.activated.connect(self.toggleSlider)
-        self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
-        self.shortcut.activated.connect(self.forwardSlider)
-        self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
-        self.shortcut.activated.connect(self.backSlider)
-        # self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Up), self)
-        # self.shortcut.activated.connect(self.volumeUp)
-        # self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Down), self)
-        # self.shortcut.activated.connect(self.volumeDown)    
-        self.shortcut = QShortcut(QKeySequence(Qt.KeyboardModifier.ShiftModifier |  Qt.Key.Key_Right) , self)
-        self.shortcut.activated.connect(self.forwardSlider10)
-        self.shortcut = QShortcut(QKeySequence(Qt.KeyboardModifier.ShiftModifier |  Qt.Key.Key_Left) , self)
-        self.shortcut.activated.connect(self.backSlider10)
         
         self.shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), self.caption_input)
         self.shortcut.activated.connect(self.nextCaption)
@@ -173,6 +146,9 @@ class VideoPlayer(QWidget):
         self.shortcut.activated.connect(self.replay_caption)
         
         self.caption_input.textChanged.connect(self.text_input_change)
+        
+        self.whisper_model = None
+        self.media_source = None
 
         self.mediaPlayer.setVideoOutput(self.videoWidget)
         self.mediaPlayer.playbackStateChanged.connect(self.mediaStateChanged)
@@ -227,13 +203,17 @@ class VideoPlayer(QWidget):
     def openFile(self):
         fileName, _ = QFileDialog.getOpenFileName(self, "Open Movie",
                 QDir.homePath() + "/Videos", "Media (*.webm *.mp4 *.ts *.avi *.mpeg *.mpg *.mkv *.VOB *.m4v *.3gp *.mp3 *.m4a *.wav *.ogg *.flac *.m3u *.m3u8)")
-        print(fileName)
+        path, _ = os.path.splitext(fileName)
+        
         if fileName != '':
             self.loadFilm(fileName)
+            if os.path.exists(path + ".caption"):
+                self.openCaption(path + ".caption")
             print("File loaded")
             
-    def openCaption(self):
-        fileName, _ = QFileDialog.getOpenFileName(self, "Open Caption",
+    def openCaption(self, fileName = None):
+        if fileName is None:
+            fileName, _ = QFileDialog.getOpenFileName(self, "Open Caption",
                 QDir.homePath() + "/Videos", "pickle (*.pkl)")
 
         if fileName != '':
@@ -241,7 +221,7 @@ class VideoPlayer(QWidget):
             self.caption_answer = [""] * len(self.caption_text)
             self.caption_idx = 0
             self.setPosition(0)
-            print("Caption loaded")
+            print(f"Caption loaded: {fileName}")
         else:
             self.caption_text = None
             self.caption_answer = None
@@ -337,6 +317,25 @@ class VideoPlayer(QWidget):
             self.caption_input.setEnabled(True)
             self.caption.setText("")
             
+    def videoTranscript(self):
+        if self.media_source is None:
+            return
+        
+        
+        self.mediaPlayer.pause()
+        msgBox = QMessageBox(self)
+        msgBox.setText("Please wait...")
+        
+        wps = whisper_process_thread(self)
+        wps.finished.connect(msgBox.close)
+        wps.start()
+        
+        msgBox.show()
+            
+       
+            
+        
+            
     def show_caption(self):
         self.caption_show = not self.caption_show
         if not self.caption_show:
@@ -391,6 +390,7 @@ class VideoPlayer(QWidget):
         menu = QMenu()
         actionFile = menu.addAction(QIcon.fromTheme("video-x-generic"),"open File (o)")
         actionCaption = menu.addAction(QIcon.fromTheme("video-x-generic"),"open Caption (null)")
+        actionTranscript = menu.addAction(QIcon.fromTheme("video-x-generic"),"transcript Video (null)")
         actionclipboard = menu.addSeparator() 
         actionPractice = menu.addAction(QIcon.fromTheme("video-x-generic"),"pratice Mode (null)")
         actionShowCaption = menu.addAction(QIcon.fromTheme("video-x-generic"),"show caption (null)")
@@ -410,6 +410,7 @@ class VideoPlayer(QWidget):
         
         actionFile.triggered.connect(self.openFile)
         actionCaption.triggered.connect(self.openCaption)
+        actionTranscript.triggered.connect(self.videoTranscript)
         actionPractice.triggered.connect(self.switch_practice_mode)
         actionShowCaption.triggered.connect(self.show_caption)
         actionQuit.triggered.connect(self.handleQuit)
@@ -470,7 +471,7 @@ class VideoPlayer(QWidget):
             QApplication.setOverrideCursor(Qt.CursorShape.ArrowCursor)
 
     def handleInfo(self):
-        msg = QMessageBox.about(self, "QT5 Player", self.myinfo)
+        msg = QMessageBox.about(self, "QT6 Player based on OpenAI Whisper", self.myinfo)
             
     def toggleSlider(self):    
         if self.positionSlider.isVisible():
@@ -566,6 +567,7 @@ class VideoPlayer(QWidget):
                 self.hideSlider()
     
     def loadFilm(self, f):
+        self.media_source = f
         self.mediaPlayer.setSource(QUrl.fromLocalFile(f))
         self.playButton.setEnabled(True)
         self.mediaPlayer.play()
@@ -590,6 +592,27 @@ class VideoPlayer(QWidget):
             matching = [s for s in filelist if ".myformat" in s]
             if len(matching) > 0:
                 self.loadFilm(matching)
+
+class whisper_process_thread(QThread):
+    def __init__(self, context:VideoPlayer):
+        super().__init__()
+        self.context = context
+
+    def run(self):
+        if self.context.whisper_model is None:
+            self.context.whisper_model = whisper.load_model("medium").cuda()
+        result = self.context.whisper_model.transcribe(self.context.media_source)
+        output_text_pkl = []
+        for seg in result["segments"]:
+            output_text_pkl.append({
+                "id": seg["id"], 
+                "start": seg["start"], 
+                "end": seg["end"], 
+                "text": seg["text"], 
+            })
+        save_path, _ = os.path.splitext(self.context.media_source)
+        pkl.dump(output_text_pkl, open(save_path + ".caption", "wb+"))
+        self.context.openCaption(save_path + ".caption")
 
 ##################### end ##################################
 
@@ -668,4 +691,5 @@ if __name__ == '__main__':
             player.playFromURL()
         else:
             player.loadFilm(sys.argv[1])
+            player.showSlider()
 sys.exit(app.exec())
